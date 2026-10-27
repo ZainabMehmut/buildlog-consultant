@@ -223,6 +223,33 @@ impl Matcher for HaskellMissingDependencyMatcher {
 }
 
 #[derive(Debug, Clone)]
+struct CargoGitRevisionNotFoundMatcher;
+
+impl Matcher for CargoGitRevisionNotFoundMatcher {
+    fn extract_from_lines(&self, lines: &[&str], offset: usize) -> MatchResult {
+        if !regex_is_match!(
+            r"^  revision [0-9a-f]+ not found$",
+            lines[offset].trim_end_matches('\n')
+        ) {
+            return Ok(None);
+        }
+
+        // Report the dependency at the head of cargo's "Caused by:" chain.
+        for i in (offset.saturating_sub(20)..offset).rev() {
+            if let Some((_, crate_name)) = regex_captures!(
+                r"^error: failed to get `(.*)` as a dependency of package `.*`",
+                lines[i].trim_end_matches('\n')
+            ) {
+                let m = SingleLineMatch::from_lines(lines, i, Some("cargo git dependency"));
+                let p = MissingCargoCrate::simple(crate_name.to_string());
+                return Ok(Some(Failure::new(m, Some(Box::new(p)))));
+            }
+        }
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct SetupPyCommandMissingMatcher;
 
 impl Matcher for SetupPyCommandMissingMatcher {
@@ -848,6 +875,7 @@ lazy_static::lazy_static! {
     regex_line_matcher!(r"^error: can't find Rust compiler", |_| Ok(Some(Box::new(MissingRustCompiler)))),
     regex_line_matcher!(r"^Found no assembler", |_| Ok(Some(Box::new(MissingAssembler)))),
     regex_line_matcher!(r"^error: failed to get `(.*)` as a dependency of package `(.*)`", |m| Ok(Some(Box::new(MissingCargoCrate::simple(m.get(1).unwrap().as_str().to_string()))))),
+    Box::new(CargoGitRevisionNotFoundMatcher),
     regex_line_matcher!(r"^configure: error: (.*) requires libkqueue \(or system kqueue\). .*", |_| Ok(Some(Box::new(MissingPkgConfig::simple("libkqueue".to_string()))))),
     regex_line_matcher!(r"^Did not find pkg-config by name 'pkg-config'", |_| Ok(Some(Box::new(MissingCommand { command: "pkg-config".to_string() })))),
     regex_line_matcher!(r"^configure: error: Required (.*) binary is missing. Please install (.*).", |m| Ok(Some(Box::new(MissingCommand { command: m.get(1).unwrap().as_str().to_string() })))),
@@ -5643,6 +5671,43 @@ error: invalid command 'test'
         assert_just_match(
             vec!["There is a syntax error in your configuration file: Unknown syntax: Constant"],
             1,
+        );
+    }
+
+    #[test]
+    fn test_cargo_failed_to_get() {
+        assert_match(
+            vec![
+                "error: failed to get `gizmo-core` as a dependency of package `hello v0.1.0 (/<<PKGBUILDDIR>>)`",
+                "",
+                "Caused by:",
+                "  failed to load source for dependency `gizmo-core`",
+            ],
+            1,
+            Some(MissingCargoCrate::simple("gizmo-core".to_owned())),
+        );
+        assert_match(
+            vec![
+                "    Updating git repository `https://git.example.com/gizmo-core`",
+                "error: failed to get `gizmo-core` as a dependency of package `hello v0.1.0 (/<<PKGBUILDDIR>>)`",
+                "",
+                "Caused by:",
+                "  failed to load source for dependency `gizmo-core`",
+                "",
+                "Caused by:",
+                "  unable to update https://git.example.com/gizmo-core?rev=9f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+                "",
+                "Caused by:",
+                "  failed to clone into: /<<PKGBUILDDIR>>/debian/cargo_home/git/db/gizmo-core-3c5d7e9f1a2b4c6d",
+                "",
+                "Caused by:",
+                "  revision 9f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6 not found",
+                "",
+                "Caused by:",
+                "  failed to resolve address for git.example.com: Temporary failure in name resolution; class=Net (12)",
+            ],
+            2,
+            Some(MissingCargoCrate::simple("gizmo-core".to_owned())),
         );
     }
 
