@@ -1935,6 +1935,14 @@ lazy_static::lazy_static! {
         |m| Ok(Some(Box::new(UnknownCertificateAuthority { url: m.get(1).unwrap().as_str().to_string() })))
     ),
     regex_line_matcher!(
+        r#"^go: ([^@\s]+)@[^:\s]+: Get ".*": dial tcp: "#,
+        |m| Ok(Some(Box::new(MissingGoPackage { package: m.get(1).unwrap().as_str().to_string() })))
+    ),
+    regex_line_matcher!(
+        r#"\.go:[0-9]+:[0-9]+: ([^@\s]+)@[^:\s]+: Get ".*": dial tcp: "#,
+        |m| Ok(Some(Box::new(MissingGoPackage { package: m.get(1).unwrap().as_str().to_string() })))
+    ),
+    regex_line_matcher!(
         r"fatal: unable to access '(.*)': server certificate verification failed. CAfile: none CRLfile: none",
         |m| Ok(Some(Box::new(UnknownCertificateAuthority { url: m.get(1).unwrap().as_str().to_string() })))
     ),
@@ -5720,6 +5728,29 @@ error: invalid command 'test'
             1,
             Some(MissingGoPackage {
                 package: "golang.org/x/xerrors".to_owned(),
+            }),
+        );
+    }
+
+    #[test]
+    fn test_go_module_download_failed() {
+        assert_match(
+            vec![
+                "go: downloading example.com/foo v1.2.3",
+                r#"cmd/hello/main.go:3:8: example.com/foo@v1.2.3: Get "https://proxy.golang.org/example.com/foo/@v/v1.2.3.zip": dial tcp: lookup proxy.golang.org on [::1]:53: read udp [::1]:40125->[::1]:53: read: connection refused"#,
+            ],
+            2,
+            Some(MissingGoPackage {
+                package: "example.com/foo".to_owned(),
+            }),
+        );
+        assert_match(
+            vec![
+                r#"go: example.com/foo@v1.2.3: Get "https://proxy.golang.org/example.com/foo/@v/v1.2.3.mod": dial tcp: lookup proxy.golang.org: no such host"#,
+            ],
+            1,
+            Some(MissingGoPackage {
+                package: "example.com/foo".to_owned(),
             }),
         );
     }
