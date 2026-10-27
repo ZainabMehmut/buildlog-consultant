@@ -28,6 +28,12 @@ fn node_module_missing(c: &Captures) -> Result<Option<Box<dyn Problem>>, Error> 
     })))
 }
 
+fn out_of_memory(c: &Captures) -> Result<Option<Box<dyn Problem>>, Error> {
+    Ok(Some(Box::new(OutOfMemory {
+        program: c.get(1).unwrap().as_str().to_string(),
+    })))
+}
+
 fn file_not_found(c: &Captures) -> Result<Option<Box<dyn Problem>>, Error> {
     let path = c.get(1).unwrap().as_str();
     if path.starts_with('/') && !path.starts_with("/<<PKGBUILDDIR>>") {
@@ -2180,6 +2186,10 @@ lazy_static::lazy_static! {
         |_| Ok(Some(Box::new(MissingGoModFile)))
     ),
     regex_line_matcher!(r"go: updates to go.mod needed; to update it:", |_| Ok(Some(Box::new(OutdatedGoModFile)))),
+    regex_line_matcher!(r": fatal error: Killed signal terminated program (\S+)", out_of_memory),
+    regex_line_matcher!(r": internal compiler error: Killed \(program (\S+)\)", out_of_memory),
+    regex_line_matcher!(r"^collect2: fatal error: (\S+) terminated with signal 9 \[Killed\]", out_of_memory),
+    regex_line_matcher!(r"^(\S+): out of memory allocating [0-9]+ bytes after a total of [0-9]+ bytes", out_of_memory),
     regex_line_matcher!(r"(c\+\+|collect2|cc1|g\+\+): fatal error: .*"),
     regex_line_matcher!(r"fatal: making (.*): failed to create tests\/decode.trs"),
     // ocaml
@@ -5313,6 +5323,42 @@ mod tests {
             ["OSError: [Errno 28] No space left on device"].to_vec(),
             1,
             Some(NoSpaceOnDevice),
+        );
+    }
+
+    #[test]
+    fn test_out_of_memory() {
+        assert_match(
+            vec![
+                "x86_64-linux-gnu-g++ -O2 -c -o big.o big.cpp",
+                "x86_64-linux-gnu-g++: fatal error: Killed signal terminated program cc1plus",
+                "compilation terminated.",
+            ],
+            2,
+            Some(OutOfMemory {
+                program: "cc1plus".to_owned(),
+            }),
+        );
+        assert_match(
+            vec!["g++: internal compiler error: Killed (program cc1plus)"],
+            1,
+            Some(OutOfMemory {
+                program: "cc1plus".to_owned(),
+            }),
+        );
+        assert_match(
+            vec!["collect2: fatal error: ld terminated with signal 9 [Killed]"],
+            1,
+            Some(OutOfMemory {
+                program: "ld".to_owned(),
+            }),
+        );
+        assert_match(
+            vec!["cc1plus: out of memory allocating 65536 bytes after a total of 145264640 bytes"],
+            1,
+            Some(OutOfMemory {
+                program: "cc1plus".to_owned(),
+            }),
         );
     }
 
